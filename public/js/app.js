@@ -4,12 +4,14 @@ let state = {
   cues: [], // 原始提示点（供前置选择）
   scheduled: [], // 排程结果
   cycle: null,
+  conflicts: [], // 演员走位冲突
   editingId: null,
 };
 
 const els = {
   tbody: document.getElementById('cue-tbody'),
   banner: document.getElementById('cycle-banner'),
+  conflictBanner: document.getElementById('conflict-banner'),
   stats: document.getElementById('stats'),
   mask: document.getElementById('modal-mask'),
   form: document.getElementById('cue-form'),
@@ -33,11 +35,13 @@ async function refresh() {
   state.cues = cues;
   state.scheduled = scheduleResult.cues;
   state.cycle = scheduleResult.cycle;
+  state.conflicts = scheduleResult.conflicts || [];
   render();
 }
 
 function render() {
   renderBanner();
+  renderConflictBanner();
   renderStats();
   renderTable();
 }
@@ -70,12 +74,35 @@ function renderBanner() {
   els.banner.classList.remove('hidden');
 }
 
+function renderConflictBanner() {
+  if (!state.conflicts.length) {
+    els.conflictBanner.classList.add('hidden');
+    els.conflictBanner.innerHTML = '';
+    return;
+  }
+  const items = state.conflicts
+    .map(
+      (cf) =>
+        `<div class="conflict-item">演员 <strong>${CS.esc(cf.actor)}</strong>：` +
+        `${CS.esc(CS.nameOf(cf.cueA))}（${CS.fmtTime(cf.cueA.earliestStart)}–${CS.fmtTime(cf.cueA.earliestFinish)}）` +
+        ` 与 ${CS.esc(CS.nameOf(cf.cueB))}（${CS.fmtTime(cf.cueB.earliestStart)}–${CS.fmtTime(cf.cueB.earliestFinish)}）` +
+        ` 走位重叠 <span class="conflict-range">${CS.fmtTime(cf.overlapStart)}–${CS.fmtTime(cf.overlapFinish)}</span></div>`
+    )
+    .join('');
+  els.conflictBanner.innerHTML =
+    `⚠ <strong>发现 ${state.conflicts.length} 处演员走位冲突：</strong>` +
+    items +
+    `<div class="hint">请调整相关提示点的演员、时长或前置关系；结束恰好等于另一项开始不算冲突。</div>`;
+  els.conflictBanner.classList.remove('hidden');
+}
+
 function renderStats() {
   const total = state.scheduled.length;
   const scheduled = state.scheduled.filter((c) => c.scheduled);
   const overdue = state.scheduled.filter((c) => c.overdue).length;
   const cyclic = state.cycle ? state.cycle.nodes.length : 0;
   const blocked = state.scheduled.filter((c) => c.blockedByCycle).length;
+  const conflictCues = CS.conflictsByCue(state.conflicts).size;
   const finish = scheduled.length ? Math.max(...scheduled.map((c) => c.earliestFinish)) : null;
 
   const stat = (cls, num, label) =>
@@ -87,20 +114,34 @@ function renderStats() {
     stat(cyclic ? 'danger' : '', cyclic, '环依赖') +
     stat(blocked ? 'warn' : '', blocked, '被环阻塞') +
     stat(overdue ? 'danger' : '', overdue, '超过最晚完成') +
+    stat(conflictCues ? 'warn' : '', state.conflicts.length, '演员冲突') +
     stat('', finish == null ? '—' : CS.fmtTime(finish), '预计全部完成');
 }
 
 function renderTable() {
   const byId = new Map(state.scheduled.map((c) => [c.id, c]));
+  const conflictsByCue = CS.conflictsByCue(state.conflicts);
   els.tbody.innerHTML = state.scheduled
     .map((c, i) => {
-      const rowCls = c.inCycle
-        ? 'row-cycle'
-        : c.blockedByCycle
-          ? 'row-blocked'
-          : c.overdue
-            ? 'row-overdue'
-            : '';
+      const cueConflicts = conflictsByCue.get(c.id) || [];
+      const conflictActors = new Set(cueConflicts.map((cf) => cf.actor));
+      const rowCls =
+        (c.inCycle
+          ? 'row-cycle'
+          : c.blockedByCycle
+            ? 'row-blocked'
+            : c.overdue
+              ? 'row-overdue'
+              : '') + (cueConflicts.length ? ' row-conflict' : '');
+
+      const actors = c.actors && c.actors.length
+        ? `<div class="actors">${c.actors
+            .map(
+              (a) =>
+                `<span class="actor-tag ${conflictActors.has(a) ? 'actor-conflict' : ''}">${CS.esc(a)}</span>`
+            )
+            .join('')}</div>`
+        : '<span class="hint">—</span>';
 
       const pres = c.prerequisites.length
         ? `<div class="pres">${c.prerequisites
@@ -124,12 +165,13 @@ function renderTable() {
         : '—';
 
       return `
-      <tr class="${rowCls}">
+      <tr class="${rowCls.trim()}">
         <td>${i + 1}</td>
         <td>
           <span class="cue-ref">${CS.esc(c.ref || `#${c.id}`)}</span>
           <span class="cue-name">${CS.esc(c.title)}</span>
         </td>
+        <td>${actors}</td>
         <td class="num">${CS.fmtDur(c.duration)}</td>
         <td class="num t-time">${CS.fmtTime(c.minStart)}</td>
         <td>${pres}</td>
@@ -139,7 +181,7 @@ function renderTable() {
         }</td>
         <td class="num t-time">${c.maxFinish == null ? '不限' : CS.fmtTime(c.maxFinish)}</td>
         <td class="num">${slackCell}</td>
-        <td>${statusBadge(c)}</td>
+        <td>${statusBadge(c, cueConflicts)}</td>
         <td>
           <div class="row-ops">
             <button class="btn btn-sm" data-act="edit" data-id="${c.id}">编辑</button>
@@ -157,11 +199,21 @@ function renderTable() {
   });
 }
 
-function statusBadge(c) {
-  if (c.inCycle) return '<span class="badge badge-cycle">⚠ 环依赖</span>';
-  if (c.blockedByCycle) return '<span class="badge badge-blocked">环阻塞</span>';
-  if (c.overdue) return '<span class="badge badge-overdue">⚠ 超过最晚完成</span>';
-  return '<span class="badge badge-ok">正常</span>';
+function statusBadge(c, cueConflicts = []) {
+  const badges = [];
+  if (c.inCycle) badges.push('<span class="badge badge-cycle">⚠ 环依赖</span>');
+  else if (c.blockedByCycle) badges.push('<span class="badge badge-blocked">环阻塞</span>');
+  else if (c.overdue) badges.push('<span class="badge badge-overdue">⚠ 超过最晚完成</span>');
+  else badges.push('<span class="badge badge-ok">正常</span>');
+  if (cueConflicts.length) {
+    const names = Array.from(new Set(cueConflicts.map((cf) => cf.actor)))
+      .map((a) => CS.esc(a))
+      .join('、');
+    badges.push(
+      `<span class="badge badge-conflict" title="与 ${names} 相关的走位重叠">⚠ 演员冲突</span>`
+    );
+  }
+  return badges.join(' ');
 }
 
 /* ---------- 弹窗 ---------- */
@@ -180,6 +232,7 @@ function openModal(id) {
     els.form.elements.duration.value = CS.durationForInput(cue.duration);
     els.form.elements.minStart.value = cue.minStart ? CS.fmtTime(cue.minStart) : '';
     els.form.elements.maxFinish.value = cue.maxFinish == null ? '' : CS.fmtTime(cue.maxFinish);
+    els.form.elements.actors.value = (cue.actors || []).join('，');
   }
 
   // 前置候选项不含自身
@@ -215,6 +268,7 @@ async function onSubmit(e) {
     duration: f.duration.value.trim(),
     minStart: f.minStart.value.trim(),
     maxFinish: f.maxFinish.value.trim(),
+    actors: parseActors(f.actors.value),
     prerequisites: Array.from(els.preList.querySelectorAll('input:checked')).map((i) =>
       Number(i.value)
     ),
@@ -232,6 +286,18 @@ async function onSubmit(e) {
     els.formError.textContent = err.message;
     els.formError.classList.remove('hidden');
   }
+}
+
+/** 把“林岚，周航、张三”这类输入解析为去重后的演员数组 */
+function parseActors(text) {
+  return Array.from(
+    new Set(
+      String(text || '')
+        .split(/[,，、;；\n]/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+    )
+  );
 }
 
 async function onDelete(id) {

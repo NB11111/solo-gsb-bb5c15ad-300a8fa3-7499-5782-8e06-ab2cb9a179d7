@@ -65,4 +65,33 @@ window.CS = {
     if (!c) return `#${id}`;
     return c.ref ? c.ref : c.title;
   },
+
+  /** 提示点对象的显示名：有编号时“编号 名称”，否则仅名称 */
+  nameOf(c) {
+    if (!c) return '';
+    return c.ref ? `${c.ref} ${c.title}` : c.title;
+  },
+
+  /**
+   * 把演员冲突列表整理成 cueId -> [{ actor, other, overlapStart, overlapFinish }]
+   * 便于主页面与打印视图按行标出冲突
+   */
+  conflictsByCue(conflicts) {
+    const byCue = new Map();
+    for (const cf of conflicts || []) {
+      for (const [self, other] of [
+        [cf.cueA, cf.cueB],
+        [cf.cueB, cf.cueA],
+      ]) {
+        if (!byCue.has(self.id)) byCue.set(self.id, []);
+        byCue.get(self.id).push({
+          actor: cf.actor,
+          other,
+          overlapStart: cf.overlapStart,
+          overlapFinish: cf.overlapFinish,
+        });
+      }
+    }
+    return byCue;
+  },
 };

@@ -23,6 +23,7 @@
 
   <main class="container">
     <div id="cycle-banner" class="banner banner-danger hidden"></div>
+    <div id="conflict-banner" class="banner banner-warn hidden"></div>
 
     <section class="stats" id="stats"></section>
 
@@ -37,6 +38,7 @@
             <tr>
               <th class="col-seq">#</th>
               <th>提示点</th>
+              <th>演员</th>
               <th class="num">时长</th>
               <th class="num">最早开始<br><small>（录入）</small></th>
               <th>前置提示点</th>
@@ -87,6 +89,12 @@
             <input type="text" name="maxFinish" placeholder="可留空" />
             <small>留空表示不限</small>
           </div>
+        </div>
+
+        <div class="form-row">
+          <label>演员 <small>多名用逗号分隔，可留空</small></label>
+          <input type="text" name="actors" placeholder="如：林岚，周航" maxlength="200" />
+          <small>同一演员被排到时间重叠的提示点时，会在页面上方与走台单中标出冲突。</small>
         </div>
 
         <div class="form-row">

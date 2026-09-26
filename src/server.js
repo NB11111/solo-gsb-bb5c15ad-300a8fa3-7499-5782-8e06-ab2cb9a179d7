@@ -107,7 +107,23 @@ function validateCueBody(body, { db: database, id }) {
     }
   }
 
-  return { ref, title, duration, minStart, maxFinish, prerequisites };
+  // 演员名单：接受数组，或用逗号/顿号分隔的字符串；统一按分隔符拆分
+  let actors = [];
+  if (body.actors != null) {
+    const raw = Array.isArray(body.actors) ? body.actors.join(',') : String(body.actors);
+    actors = Array.from(
+      new Set(
+        raw
+          .split(/[,，、;；]/)
+          .map((a) => a.trim())
+          .filter(Boolean)
+      )
+    );
+    if (actors.length > 20) badRequest('演员人数过多（每项最多 20 人）');
+    if (actors.some((a) => a.length > 30)) badRequest('演员姓名过长（最多 30 字）');
+  }
+
+  return { ref, title, duration, minStart, maxFinish, prerequisites, actors };
 }
 
 function badRequest(msg) {

@@ -25,6 +25,7 @@
     </header>
 
     <div id="cycle-banner" class="banner banner-danger hidden"></div>
+    <div id="conflict-banner" class="banner banner-warn hidden"></div>
 
     <table class="cue-table print-table">
       <thead>
@@ -32,6 +33,7 @@
           <th style="width:36px">#</th>
           <th style="width:70px">编号</th>
           <th>提示点</th>
+          <th style="width:110px">演员</th>
           <th class="num" style="width:70px">时长</th>
           <th class="num" style="width:90px">开始</th>
           <th class="num" style="width:90px">结束</th>
@@ -45,7 +47,7 @@
 
     <footer class="print-foot">
       <span>排程生成时间：<em id="gen-time"></em></span>
-      <span>超期项目以 ⚠ 标注；环依赖 / 被阻塞项目无法排程，需先解除依赖。</span>
+      <span>超期与演员冲突项目以 ⚠ 标注；环依赖 / 被阻塞项目无法排程，需先解除依赖。</span>
     </footer>
   </main>
 

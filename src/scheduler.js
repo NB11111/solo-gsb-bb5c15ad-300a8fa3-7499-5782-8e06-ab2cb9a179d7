@@ -8,7 +8,7 @@
  * - 环依赖：Tarjan SCC 找出环上全部提示点，Kahn 算法找出被环阻塞的提示点
  * - 超时：计算结果晚于最晚完成时间时标记
  *
- * 输入 cues: [{ id, ref, title, duration, minStart, maxFinish, prerequisites:[id...] }]
+ * 输入 cues: [{ id, ref, title, duration, minStart, maxFinish, prerequisites:[id...], actors:[name...] }]
  * 输出: { cues:[...计算结果], cycle:{nodes, path}|null }
  */
 
@@ -155,6 +155,7 @@ function schedule(inputCues) {
       minStart: c.minStart,
       maxFinish: c.maxFinish,
       prerequisites: c.prerequisites.filter((p) => cues.has(p)),
+      actors: c.actors || [],
       earliestStart: es,
       earliestFinish: ef,
       inCycle: isCyclic,
