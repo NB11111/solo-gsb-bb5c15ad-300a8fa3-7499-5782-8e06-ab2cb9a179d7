@@ -29,6 +29,10 @@ app.get('/api/schedule', (_req, res) => {
   res.json(db.computeSchedule());
 });
 
+app.get('/api/conflicts', (_req, res) => {
+  res.json(db.computeSchedule().conflicts);
+});
+
 app.get('/api/cues/:id', (req, res) => {
   const cue = db.getCue(Number(req.params.id));
   if (!cue) return res.status(404).json({ error: '提示点不存在' });
@@ -93,6 +97,16 @@ function validateCueBody(body, { db: database, id }) {
     if (maxFinish < minStart) badRequest('最晚完成时间不能早于最早开始时间');
   }
 
+  let actors = [];
+  if (body.actors != null) {
+    if (!Array.isArray(body.actors)) badRequest('演员必须是名字数组');
+    actors = Array.from(
+      new Set(body.actors.map((a) => String(a).trim()).filter(Boolean))
+    );
+    if (actors.length > 20) badRequest('单个提示点最多填写 20 名演员');
+    if (actors.some((a) => a.length > 30)) badRequest('演员名字过长（最多 30 字）');
+  }
+
   let prerequisites = [];
   if (body.prerequisites != null) {
     if (!Array.isArray(body.prerequisites)) badRequest('前置提示点必须是编号数组');
@@ -107,7 +121,7 @@ function validateCueBody(body, { db: database, id }) {
     }
   }
 
-  return { ref, title, duration, minStart, maxFinish, prerequisites };
+  return { ref, title, duration, minStart, maxFinish, actors, prerequisites };
 }
 
 function badRequest(msg) {

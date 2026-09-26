@@ -7,9 +7,11 @@
  * - earliestFinish = earliestStart + duration
  * - 环依赖：Tarjan SCC 找出环上全部提示点，Kahn 算法找出被环阻塞的提示点
  * - 超时：计算结果晚于最晚完成时间时标记
+ * - 演员冲突：同一演员被分到时间重叠的提示点时标出（仅已成功排程者参与；
+ *   结束恰好等于另一项开始不算冲突；环上及被阻塞项无有效时间，不参与检查）
  *
- * 输入 cues: [{ id, ref, title, duration, minStart, maxFinish, prerequisites:[id...] }]
- * 输出: { cues:[...计算结果], cycle:{nodes, path}|null }
+ * 输入 cues: [{ id, ref, title, duration, minStart, maxFinish, actors:[名字...], prerequisites:[id...] }]
+ * 输出: { cues:[...计算结果], cycle:{nodes, path}|null, conflicts:[演员冲突...] }
  */
 
 function schedule(inputCues) {
@@ -154,6 +156,7 @@ function schedule(inputCues) {
       duration: c.duration,
       minStart: c.minStart,
       maxFinish: c.maxFinish,
+      actors: Array.isArray(c.actors) ? c.actors : [],
       prerequisites: c.prerequisites.filter((p) => cues.has(p)),
       earliestStart: es,
       earliestFinish: ef,
@@ -162,8 +165,52 @@ function schedule(inputCues) {
       scheduled,
       overdue: scheduled && c.maxFinish != null && ef > c.maxFinish,
       slack: scheduled && c.maxFinish != null ? c.maxFinish - ef : null,
+      conflictActors: [],
     });
   }
+
+  /* ---------- 演员时间冲突：仅已成功排程（有有效起止时间）的提示点参与 ---------- */
+  const cuesByActor = new Map();
+  for (const r of results) {
+    if (!r.scheduled) continue;
+    for (const actor of r.actors) {
+      const list = cuesByActor.get(actor);
+      if (list) list.push(r);
+      else cuesByActor.set(actor, [r]);
+    }
+  }
+
+  const conflicts = [];
+  for (const [actor, list] of cuesByActor) {
+    const sorted = list
+      .slice()
+      .sort((a, b) => a.earliestStart - b.earliestStart || a.id - b.id);
+    for (let i = 0; i < sorted.length; i++) {
+      const a = sorted[i];
+      for (let j = i + 1; j < sorted.length; j++) {
+        const b = sorted[j];
+        // 按开始时间排序后，b 及之后的项开始时间都不早于 a 的结束，不会再与 a 重叠
+        if (b.earliestStart >= a.earliestFinish) break;
+        // 半开区间 [start, finish)：结束恰好等于另一项开始不算冲突
+        const overlapStart = Math.max(a.earliestStart, b.earliestStart);
+        const overlapEnd = Math.min(a.earliestFinish, b.earliestFinish);
+        if (overlapStart >= overlapEnd) continue;
+        conflicts.push({
+          actor,
+          cueA: conflictCueRef(a),
+          cueB: conflictCueRef(b),
+          overlapStart,
+          overlapEnd,
+        });
+        if (!a.conflictActors.includes(actor)) a.conflictActors.push(actor);
+        if (!b.conflictActors.includes(actor)) b.conflictActors.push(actor);
+      }
+    }
+  }
+
+  conflicts.sort(
+    (x, y) => x.overlapStart - y.overlapStart || x.actor.localeCompare(y.actor, 'zh')
+  );
 
   // 走台单排序：已排程按开始时间，再按编号/ID；不可排程（环/阻塞）排在后面
   results.sort((a, b) => {
@@ -187,7 +234,18 @@ function schedule(inputCues) {
         }
       : null;
 
-  return { cues: results, cycle };
+  return { cues: results, cycle, conflicts };
+}
+
+/** 冲突条目里引用提示点时只保留展示所需的字段 */
+function conflictCueRef(c) {
+  return {
+    id: c.id,
+    ref: c.ref,
+    title: c.title,
+    earliestStart: c.earliestStart,
+    earliestFinish: c.earliestFinish,
+  };
 }
 
 /** 在给定强连通分量中用 DFS 找出一条回到已访问节点的路径 */

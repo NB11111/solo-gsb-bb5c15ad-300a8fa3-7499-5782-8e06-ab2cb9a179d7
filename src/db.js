@@ -44,6 +44,13 @@ function init() {
       FOREIGN KEY (cue_id) REFERENCES cues(id) ON DELETE CASCADE,
       FOREIGN KEY (prerequisite_id) REFERENCES cues(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS cue_actors (
+      cue_id INTEGER NOT NULL,
+      actor  TEXT NOT NULL,
+      PRIMARY KEY (cue_id, actor),
+      FOREIGN KEY (cue_id) REFERENCES cues(id) ON DELETE CASCADE
+    );
   `);
 }
 
@@ -51,7 +58,7 @@ function countCues() {
   return db.prepare('SELECT COUNT(*) AS n FROM cues').get().n;
 }
 
-/** 读取全部提示点（含前置 id 列表），用于排程计算与接口返回 */
+/** 读取全部提示点（含前置 id 列表与演员名单），用于排程计算与接口返回 */
 function listCues() {
   const rows = db
     .prepare(
@@ -65,8 +72,16 @@ function listCues() {
     )
     .all();
 
+  const actorsByCue = new Map();
+  for (const r of db.prepare('SELECT cue_id AS cueId, actor FROM cue_actors ORDER BY cue_id, rowid').all()) {
+    const list = actorsByCue.get(r.cueId);
+    if (list) list.push(r.actor);
+    else actorsByCue.set(r.cueId, [r.actor]);
+  }
+
   return rows.map((r) => ({
     ...r,
+    actors: actorsByCue.get(r.id) || [],
     prerequisites: r.preIds ? r.preIds.split(',').map(Number) : [],
   }));
 }
@@ -79,6 +94,10 @@ function getCue(id) {
     )
     .get(id);
   if (!row) return null;
+  row.actors = db
+    .prepare('SELECT actor FROM cue_actors WHERE cue_id = ? ORDER BY rowid')
+    .all(id)
+    .map((r) => r.actor);
   row.prerequisites = db
     .prepare('SELECT prerequisite_id AS pid FROM dependencies WHERE cue_id = ?')
     .all(id)
@@ -95,6 +114,7 @@ function computeSchedule() {
     duration: c.duration,
     minStart: c.minStart,
     maxFinish: c.maxFinish,
+    actors: c.actors,
     prerequisites: c.prerequisites,
   }));
   return schedule(cues);
@@ -121,6 +141,7 @@ function createCueImpl(data) {
     });
 
   replaceDependencies(info.lastInsertRowid, data.prerequisites || []);
+  replaceActors(info.lastInsertRowid, data.actors || []);
   return getCue(info.lastInsertRowid);
 }
 
@@ -144,6 +165,7 @@ function updateCueImpl(id, data) {
     maxFinish: data.maxFinish ?? null,
   });
   replaceDependencies(id, data.prerequisites || []);
+  replaceActors(id, data.actors || []);
   return getCue(id);
 }
 
@@ -163,18 +185,31 @@ function replaceDependencies(cueId, prerequisiteIds) {
   }
 }
 
+function replaceActors(cueId, actors) {
+  db.prepare('DELETE FROM cue_actors WHERE cue_id = ?').run(cueId);
+  const insert = db.prepare('INSERT INTO cue_actors (cue_id, actor) VALUES (?, ?)');
+  for (const name of Array.from(new Set(actors))) {
+    if (name) insert.run(cueId, name);
+  }
+}
+
 function deleteCue(id) {
   return db.prepare('DELETE FROM cues WHERE id = ?').run(id);
 }
 
-/** 首次启动写入的示例走台数据（其中“换景演练”演示超时标记） */
+/**
+ * 首次启动写入的示例走台数据：
+ * - “换景演练”演示超时标记
+ * - “台词专项排练”与“第一场演员走位”共用演员周航且时间重叠，演示演员冲突检查
+ */
 function seed() {
   const rows = [
-    { ref: 'Q1', title: '开场灯光检查', min: 0, dur: 600, max: null, pres: [] },
-    { ref: 'Q2', title: '第一场演员走位', min: 900, dur: 1200, max: null, pres: ['Q1'] },
-    { ref: 'Q3', title: '换景演练', min: 0, dur: 600, max: 2400, pres: ['Q2'] },
-    { ref: 'Q4', title: '暗场转场', min: 0, dur: 300, max: null, pres: ['Q3'] },
-    { ref: 'Q5', title: '谢幕定位', min: 3300, dur: 480, max: null, pres: ['Q4'] },
+    { ref: 'Q1', title: '开场灯光检查', min: 0, dur: 600, max: null, pres: [], actors: [] },
+    { ref: 'Q2', title: '第一场演员走位', min: 900, dur: 1200, max: null, pres: ['Q1'], actors: ['林晓', '周航'] },
+    { ref: 'Q3', title: '换景演练', min: 0, dur: 600, max: 2400, pres: ['Q2'], actors: [] },
+    { ref: 'Q4', title: '暗场转场', min: 0, dur: 300, max: null, pres: ['Q3'], actors: ['苏晴'] },
+    { ref: 'Q5', title: '谢幕定位', min: 3300, dur: 480, max: null, pres: ['Q4'], actors: ['林晓', '周航', '苏晴', '陈默'] },
+    { ref: 'Q6', title: '台词专项排练', min: 1500, dur: 900, max: null, pres: ['Q1'], actors: ['周航', '陈默'] },
   ];
   const insert = db.prepare(
     `INSERT INTO cues (ref, title, duration, min_start, max_finish, position)
@@ -190,6 +225,10 @@ function seed() {
   );
   for (const r of rows) {
     for (const pre of r.pres) link.run(idByRef.get(r.ref), idByRef.get(pre));
+  }
+  const cast = db.prepare('INSERT INTO cue_actors (cue_id, actor) VALUES (?, ?)');
+  for (const r of rows) {
+    for (const name of r.actors) cast.run(idByRef.get(r.ref), name);
   }
 }
 

@@ -4,12 +4,14 @@ let state = {
   cues: [], // 原始提示点（供前置选择）
   scheduled: [], // 排程结果
   cycle: null,
+  conflicts: [], // 演员时间冲突
   editingId: null,
 };
 
 const els = {
   tbody: document.getElementById('cue-tbody'),
   banner: document.getElementById('cycle-banner'),
+  conflictBanner: document.getElementById('conflict-banner'),
   stats: document.getElementById('stats'),
   mask: document.getElementById('modal-mask'),
   form: document.getElementById('cue-form'),
@@ -33,11 +35,13 @@ async function refresh() {
   state.cues = cues;
   state.scheduled = scheduleResult.cues;
   state.cycle = scheduleResult.cycle;
+  state.conflicts = scheduleResult.conflicts || [];
   render();
 }
 
 function render() {
   renderBanner();
+  renderConflictBanner();
   renderStats();
   renderTable();
 }
@@ -70,12 +74,35 @@ function renderBanner() {
   els.banner.classList.remove('hidden');
 }
 
+function renderConflictBanner() {
+  if (!state.conflicts.length) {
+    els.conflictBanner.classList.add('hidden');
+    els.conflictBanner.innerHTML = '';
+    return;
+  }
+  const cueLabel = (c) => `${c.ref ? CS.esc(c.ref) + ' ' : ''}「${CS.esc(c.title)}」`;
+  const items = state.conflicts
+    .map(
+      (cf) =>
+        `<span class="conflict-item"><strong>${CS.esc(cf.actor)}</strong>：` +
+        `${cueLabel(cf.cueA)} 与 ${cueLabel(cf.cueB)} 重叠 ` +
+        `<code>${CS.fmtTime(cf.overlapStart)} – ${CS.fmtTime(cf.overlapEnd)}</code></span>`
+    )
+    .join(' ');
+  els.conflictBanner.innerHTML =
+    `⚠ <strong>发现 ${state.conflicts.length} 处演员时间冲突：</strong><br>` +
+    `${items}<br>` +
+    `<span>结束恰好等于另一项开始不算冲突；环依赖及其阻塞项不参与检查。修改演员、时长或前置关系后自动重新检查。</span>`;
+  els.conflictBanner.classList.remove('hidden');
+}
+
 function renderStats() {
   const total = state.scheduled.length;
   const scheduled = state.scheduled.filter((c) => c.scheduled);
   const overdue = state.scheduled.filter((c) => c.overdue).length;
   const cyclic = state.cycle ? state.cycle.nodes.length : 0;
   const blocked = state.scheduled.filter((c) => c.blockedByCycle).length;
+  const conflicts = state.conflicts.length;
   const finish = scheduled.length ? Math.max(...scheduled.map((c) => c.earliestFinish)) : null;
 
   const stat = (cls, num, label) =>
@@ -86,6 +113,7 @@ function renderStats() {
     stat('', scheduled.length, '可排程') +
     stat(cyclic ? 'danger' : '', cyclic, '环依赖') +
     stat(blocked ? 'warn' : '', blocked, '被环阻塞') +
+    stat(conflicts ? 'warn' : '', conflicts, '演员冲突') +
     stat(overdue ? 'danger' : '', overdue, '超过最晚完成') +
     stat('', finish == null ? '—' : CS.fmtTime(finish), '预计全部完成');
 }
@@ -94,13 +122,16 @@ function renderTable() {
   const byId = new Map(state.scheduled.map((c) => [c.id, c]));
   els.tbody.innerHTML = state.scheduled
     .map((c, i) => {
+      const hasConflict = (c.conflictActors || []).length > 0;
       const rowCls = c.inCycle
         ? 'row-cycle'
         : c.blockedByCycle
           ? 'row-blocked'
           : c.overdue
             ? 'row-overdue'
-            : '';
+            : hasConflict
+              ? 'row-conflict'
+              : '';
 
       const pres = c.prerequisites.length
         ? `<div class="pres">${c.prerequisites
@@ -109,6 +140,17 @@ function renderTable() {
               return `<span class="pre-tag ${exists ? '' : 'pre-missing'}" title="${
                 exists ? '' : '前置提示点已删除'
               }">${CS.esc(CS.labelOf(byId, pid))}</span>`;
+            })
+            .join('')}</div>`
+        : '<span class="hint">—</span>';
+
+      const actors = (c.actors || []).length
+        ? `<div class="actors">${c.actors
+            .map((name) => {
+              const hit = (c.conflictActors || []).includes(name);
+              return `<span class="actor-tag ${hit ? 'actor-conflict' : ''}" title="${
+                hit ? '该演员与其他提示点时间重叠' : ''
+              }">${CS.esc(name)}</span>`;
             })
             .join('')}</div>`
         : '<span class="hint">—</span>';
@@ -133,6 +175,7 @@ function renderTable() {
         <td class="num">${CS.fmtDur(c.duration)}</td>
         <td class="num t-time">${CS.fmtTime(c.minStart)}</td>
         <td>${pres}</td>
+        <td>${actors}</td>
         <td class="num t-time">${c.scheduled ? CS.fmtTime(c.earliestStart) : '—'}</td>
         <td class="num t-time ${c.overdue ? 't-overdue' : ''}">${
           c.scheduled ? CS.fmtTime(c.earliestFinish) : '—'
@@ -158,10 +201,20 @@ function renderTable() {
 }
 
 function statusBadge(c) {
-  if (c.inCycle) return '<span class="badge badge-cycle">⚠ 环依赖</span>';
-  if (c.blockedByCycle) return '<span class="badge badge-blocked">环阻塞</span>';
-  if (c.overdue) return '<span class="badge badge-overdue">⚠ 超过最晚完成</span>';
-  return '<span class="badge badge-ok">正常</span>';
+  const badges = [];
+  if (c.inCycle) badges.push('<span class="badge badge-cycle">⚠ 环依赖</span>');
+  else if (c.blockedByCycle) badges.push('<span class="badge badge-blocked">环阻塞</span>');
+  else if (c.overdue) badges.push('<span class="badge badge-overdue">⚠ 超过最晚完成</span>');
+
+  if ((c.conflictActors || []).length) {
+    badges.push(
+      `<span class="badge badge-conflict" title="演员 ${CS.esc(
+        c.conflictActors.join('、')
+      )} 与其他提示点时间重叠">⚠ 演员冲突</span>`
+    );
+  }
+  if (!badges.length) badges.push('<span class="badge badge-ok">正常</span>');
+  return badges.join(' ');
 }
 
 /* ---------- 弹窗 ---------- */
@@ -180,6 +233,7 @@ function openModal(id) {
     els.form.elements.duration.value = CS.durationForInput(cue.duration);
     els.form.elements.minStart.value = cue.minStart ? CS.fmtTime(cue.minStart) : '';
     els.form.elements.maxFinish.value = cue.maxFinish == null ? '' : CS.fmtTime(cue.maxFinish);
+    els.form.elements.actors.value = (cue.actors || []).join('、');
   }
 
   // 前置候选项不含自身
@@ -215,6 +269,7 @@ async function onSubmit(e) {
     duration: f.duration.value.trim(),
     minStart: f.minStart.value.trim(),
     maxFinish: f.maxFinish.value.trim(),
+    actors: parseActorsInput(f.actors.value),
     prerequisites: Array.from(els.preList.querySelectorAll('input:checked')).map((i) =>
       Number(i.value)
     ),
@@ -232,6 +287,18 @@ async function onSubmit(e) {
     els.formError.textContent = err.message;
     els.formError.classList.remove('hidden');
   }
+}
+
+/** 演员输入框：逗号 / 顿号 / 分号 / 换行分隔，去空白去重 */
+function parseActorsInput(value) {
+  return Array.from(
+    new Set(
+      String(value || '')
+        .split(/[,，、;；\n]+/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+    )
+  );
 }
 
 async function onDelete(id) {

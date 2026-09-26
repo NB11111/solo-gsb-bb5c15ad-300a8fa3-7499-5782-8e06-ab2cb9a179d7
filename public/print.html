@@ -25,6 +25,7 @@
     </header>
 
     <div id="cycle-banner" class="banner banner-danger hidden"></div>
+    <div id="conflict-banner" class="banner banner-warn hidden"></div>
 
     <table class="cue-table print-table">
       <thead>
@@ -37,6 +38,7 @@
           <th class="num" style="width:90px">结束</th>
           <th class="num" style="width:90px">最晚完成</th>
           <th>前置</th>
+          <th style="width:90px">演员</th>
           <th style="width:110px">状态 / 签字</th>
         </tr>
       </thead>
@@ -45,7 +47,7 @@
 
     <footer class="print-foot">
       <span>排程生成时间：<em id="gen-time"></em></span>
-      <span>超期项目以 ⚠ 标注；环依赖 / 被阻塞项目无法排程，需先解除依赖。</span>
+      <span>超期项目以 ⚠ 标注；环依赖 / 被阻塞项目无法排程，需先解除依赖；⚠ 演员冲突 表示同一演员时间重叠，需调整演员或排程。</span>
     </footer>
   </main>
 
